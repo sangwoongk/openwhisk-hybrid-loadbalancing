@@ -90,7 +90,8 @@ class InvokerReactive(
   logging.info(this, s"LogStoreProvider: ${logsProvider.getClass}")
   
   /***** rsc accounting, yanqi *****/
-  val coreNumPath = "/hypervkvp/.kvp_pool_0"
+  // val coreNumPath = "/hypervkvp/.kvp_pool_0"
+  val coreNumPath = "/sys/fs/cgroup/cpu/cpuacct.usage_percpu"
   val memoryMBPath = "/hypervkvp/.kvp_pool_2"
 
   /**
@@ -336,16 +337,20 @@ class InvokerReactive(
     if(Files.exists(Paths.get(coreNumPath))) {
       val buffer_kvp = Source.fromFile(coreNumPath)
       val lines_kvp = buffer_kvp.getLines.toArray
-      
+
       if(lines_kvp.size == 1) {
-        val kv_arr = lines_kvp(0).split("\u0000").filter(_ != "")
-        var i: Int = 0
-        while(i < kv_arr.length) {
-            if(kv_arr(i) == "CurrentCoreCount") {
-                cpu = kv_arr(i + 1).trim().toDouble
-            }
-            i = i + 1
-        }
+        // [hermod] read from /sys/fs/cgroup/cpu/cpuacct.usage_percpu
+        val kv_arr = lines_kvp(0).split(" ").filter(_ != "")
+        cpu = kv_arr.length
+
+        // val kv_arr = lines_kvp(0).split("\u0000").filter(_ != "")
+        // var i: Int = 0
+        // while(i < kv_arr.length) {
+        //     if(kv_arr(i) == "CurrentCoreCount") {
+        //         cpu = kv_arr(i + 1).trim().toDouble
+        //     }
+        //     i = i + 1
+        // }
       }
       buffer_kvp.close
     }

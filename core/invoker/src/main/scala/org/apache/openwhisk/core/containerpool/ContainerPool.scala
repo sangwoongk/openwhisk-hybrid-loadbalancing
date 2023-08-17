@@ -84,7 +84,8 @@ class ContainerPool(childFactory: ActorRefFactory => ActorRef,
   // yanqi, make invoker check its resources periodically
   val resourceCheckInterval: Long = 1000 // check resource every 1000ms
   var prevCheckTime: Long = 0 
-  val coreNumPath = "/hypervkvp/.kvp_pool_0"
+  val coreNumPath = "/sys/fs/cgroup/cpu/cpuacct.usage_percpu"
+  // val coreNumPath = "/hypervkvp/.kvp_pool_0"
   val memoryMBPath = "/hypervkvp/.kvp_pool_2"
 
   prewarmConfig.foreach { config =>
@@ -367,14 +368,17 @@ class ContainerPool(childFactory: ActorRefFactory => ActorRef,
         val lines_kvp = buffer_kvp.getLines.toArray
         
         if(lines_kvp.size == 1) {
-          val kv_arr = lines_kvp(0).split("\u0000").filter(_ != "")
-          var i: Int = 0
-          while(i < kv_arr.length) {
-              if(kv_arr(i) == "CurrentCoreCount") {
-                  cpu = kv_arr(i + 1).trim().toDouble
-              }
-              i = i + 1
-          }
+          // [hermod] read from /sys/fs/cgroup/cpu/cpuacct.usage_percpu
+          val kv_arr = lines_kvp(0).split(" ").filter(_ != "")
+          cpu = kv_arr.length
+          // val kv_arr = lines_kvp(0).split("\u0000").filter(_ != "")
+          // var i: Int = 0
+          // while(i < kv_arr.length) {
+          //     if(kv_arr(i) == "CurrentCoreCount") {
+          //         cpu = kv_arr(i + 1).trim().toDouble
+          //     }
+          //     i = i + 1
+          // }
         }
         buffer_kvp.close
       }
