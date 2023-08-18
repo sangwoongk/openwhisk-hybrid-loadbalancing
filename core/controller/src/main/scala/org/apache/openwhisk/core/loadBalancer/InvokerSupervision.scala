@@ -136,6 +136,10 @@ class InvokerPool(childFactory: (ActorRefFactory, InvokerInstanceId) => ActorRef
         status = status.updated(p.instance.toInt, new InvokerHealth(p.instance, oldHealth.status, p.cpu, p.memory))
         logStatus()
       }
+
+      // hermod. Maintain Map of warm containers for each invoker
+      InvokerPool.warms = InvokerPool.warms + (p.instance.toInt -> p.warms)
+
       invoker.forward(p)
 
     case GetStatus => sender() ! status
@@ -222,6 +226,9 @@ class InvokerPool(childFactory: (ActorRefFactory, InvokerInstanceId) => ActorRef
 }
 
 object InvokerPool {
+  // hermod
+  var warms = immutable.Map.empty[Int, Map[String, Int]]
+
   private def createTestActionForInvokerHealth(db: EntityStore, action: WhiskAction): Future[Unit] = {
     implicit val tid: TransactionId = TransactionId.loadbalancer
     implicit val ec: ExecutionContext = db.executionContext

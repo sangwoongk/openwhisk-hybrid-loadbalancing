@@ -171,7 +171,8 @@ object AcknowledegmentMessage extends DefaultJsonProtocol {
 }
 
 // yanqi, add rsc info to PingMessage, core/cpu number and memory (in MB)
-case class PingMessage(instance: InvokerInstanceId, cpu: Double, memory: Long) extends Message {
+// hermod, add warm container info to PingMessage
+case class PingMessage(instance: InvokerInstanceId, cpu: Double, memory: Long, warms: Map[String, Int]) extends Message {
   override def serialize = PingMessage.serdes.write(this).compactPrint
 }
 
@@ -180,10 +181,10 @@ case class PingMessage(instance: InvokerInstanceId, cpu: Double, memory: Long) e
 // }
 
 
-// yanqi, modify jsonFormat w.r.t PingMessage
+// yanqi, hermod, modify jsonFormat w.r.t PingMessage
 object PingMessage extends DefaultJsonProtocol {
   def parse(msg: String) = Try(serdes.read(msg.parseJson))
-  implicit val serdes = jsonFormat(PingMessage.apply _, "name", "cpu", "memory")
+  implicit val serdes = jsonFormat(PingMessage.apply _, "name", "cpu", "memory", "warms")
 }
 // object PingMessage extends DefaultJsonProtocol {
 //   def parse(msg: String) = Try(serdes.read(msg.parseJson))

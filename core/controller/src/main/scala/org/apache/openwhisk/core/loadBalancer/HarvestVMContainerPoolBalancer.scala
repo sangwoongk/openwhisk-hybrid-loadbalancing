@@ -431,108 +431,6 @@ object HarvestVMContainerPoolBalancer extends LoadBalancerProvider {
       } else primes
     })
 
-
-  // /**
-  //  * Scans through all invokers and searches for an invoker tries to get a free slot on an invoker. If no slot can be
-  //  * obtained, randomly picks a healthy invoker.
-  //  *
-  //  * @param maxConcurrent concurrency limit supported by this action
-  //  * @param invokers a list of available invokers to search in, including their state
-  //  * @param usedResources record of resource usage of inflight invocations
-  //  * @param reqMemory amount of memory that need to be acquired (e.g. memory in MB)
-  //  * @param reqCpu nubmer of cores that need to be acquired
-  //  * @param index the index to start from (initially should be the "homeInvoker"
-  //  * @param step stable identifier of the entity to be scheduled
-  //  * @param clusterSize number of controllers in the system
-  //  * @return an invoker to schedule to or None of no invoker is available
-  //  */
-  // @tailrec
-  // def schedule(
-  //   maxConcurrent: Int,
-  //   fqn: FullyQualifiedEntityName,
-  //   invokers: IndexedSeq[InvokerHealth],
-  //   usedResources: Map[Int, InvokerResourceUsage],
-  //   reqCpu: Double,
-  //   reqMemory: Int,
-  //   index: Int,
-  //   step: Int,
-  //   clusterSize: Int,
-  //   stepsDone: Int = 0)(implicit logging: Logging, transId: TransactionId): Option[(InvokerInstanceId, Boolean)] = {
-  //   val numInvokers = invokers.size
-
-  //   if (numInvokers > 0) {
-  //     val invoker = invokers(index)
-  //     val invoker_id = invoker.id.toInt
-  //     //test this invoker
-  //     // Attention: cannot use index to access usedResources directly!!!
-  //     if (invoker.status.isUsable && usedResources(invoker_id).acquire(invoker.cpu.toDouble/clusterSize, invoker.memory/clusterSize, reqCpu, reqMemory, maxConcurrent, fqn)) {
-  //       // yanqi, log rsc info for debugging
-  //       logging.info(
-  //         this,
-  //         s"check invoker id: ${invoker.id.toInt} cpu: ${invoker.cpu}, memory '${invoker.memory}'")
-  //       Some(invoker.id, false)
-  //     } else {
-  //       // If we've gone through all invokers
-  //       // choose the one doesn't need more resource with most resources available
-  //       if (stepsDone == numInvokers + 1) {
-  //         var id_running_container: Int = -1 // the invoker that already has a running container for the function
-  //         var id_most_rsc_left: Int = -1     // the invoker that has most resources left
-  //         var most_left_rsc: Double = 0.0
-  //         // yanqi, first try to find an unloaded invoker, otherwise the least loaded one
-  //         // val start_time = System.nanoTime
-  //         breakable {
-  //           for(i <- 0 to invokers.size - 1) {
-  //             val this_invoker = invokers(i)
-  //             val this_invoker_id = this_invoker.id.toInt
-  //             if(this_invoker.status.isUsable) {
-  //               val (leftcpu, leftmem, nomorersc) = usedResources(this_invoker_id).reportAvailResources(this_invoker.cpu.toDouble/clusterSize, this_invoker.memory/clusterSize, maxConcurrent, fqn)
-                
-  //               val this_id = this_invoker.id
-  //               logging.warn(this, s"check invoker${this_id.toInt} leftcpu ${leftcpu} leftmem ${leftmem}")
-
-  //               val leftrsc = leftcpu*1.0 + leftmem*0.0
-  //               if(nomorersc) {
-  //                 // of there is one invoker that has matching container with capacity, return directly
-  //                 id_running_container = this_invoker_id
-  //                 // logging.warn(this, s"system is overloaded. Chose invoker${this_invoker.id.toInt} which has running container with available capacity for the function.")
-  //                 // return Some(this_invoker.id, true)
-  //                 break
-  //               } else if(i == 0 || leftrsc > most_left_rsc) {
-  //                 most_left_rsc = leftrsc
-  //                 id_most_rsc_left = this_invoker_id
-  //               }
-  //             }
-  //           }
-  //         }
-  //         // val duration = (System.nanoTime - start_time) / 1e6d    // ms
-  //         // logging.warn(this, s"system overloaded complete check time = ${duration} ms.")
-
-  //         if(id_running_container != -1) {
-  //           val chosen_id = invokers(id_running_container).id
-  //           usedResources(id_running_container).forceAcquire(reqCpu, reqMemory, maxConcurrent, fqn)
-  //           logging.warn(this, s"system is overloaded. Chose invoker${chosen_id.toInt} which has running container with available capacity for the function.")
-  //           Some(chosen_id, true)
-  //         } else if(id_most_rsc_left == -1) {
-  //           // no healthy invokers left
-  //           logging.warn(this, s"system is overloaded. No healthy invoker in system.")
-  //           None
-  //         } else {
-  //           val chosen_id = invokers(id_most_rsc_left).id
-  //           usedResources(id_most_rsc_left).forceAcquire(reqCpu, reqMemory, maxConcurrent, fqn)
-  //           logging.warn(this, s"system is overloaded. Chose invoker${chosen_id.toInt} which has most resources left: ${most_left_rsc}.")
-  //           Some(chosen_id, true)
-  //         }
-  //       } else {
-  //         val newIndex = (index + step) % numInvokers
-  //         // schedule(maxConcurrent, fqn, invokers, dispatched, slots, newIndex, step, stepsDone + 1)
-  //         schedule(maxConcurrent, fqn, invokers, usedResources, reqCpu, reqMemory, newIndex, step, clusterSize, stepsDone + 1)
-  //       }
-  //     }
-  //   } else {
-  //     None
-  //   }
-  // }
-
   /**
    * Scans through all invokers and searches for an invoker tries to get a free slot on an invoker. If no slot can be
    * obtained, randomly picks a healthy invoker.
@@ -579,6 +477,8 @@ object HarvestVMContainerPoolBalancer extends LoadBalancerProvider {
       var loaded_cpu_left: Double = 0.0
       var loaded_mem_left: Long = 0
       var loaded_score: Double = 0.0  // scored rsc (weighted sum of rsc and memory)
+
+      logging.debug(this, s"[Hermod] warms: ${InvokerPool.warms}")
 
       // make sure that invoker's total rsc (cpu) must be greater than container's total resource
       for(i <- 0 to invokers.size - 1) {

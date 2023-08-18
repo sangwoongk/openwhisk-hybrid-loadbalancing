@@ -378,8 +378,9 @@ class InvokerReactive(
     else {
       memory = 2048
     }
+    logging.debug(this, s"[Hermod] ContainerPool.warms: ${ContainerPool.warms}")
     
-    healthProducer.send("health", PingMessage(instance, cpu, memory)).andThen {
+    healthProducer.send("health", PingMessage(instance, cpu, memory, ContainerPool.warms)).andThen {
       case Failure(t) => logging.error(this, s"failed to ping the controller: $t")
       // case Success(_) => logging.info(this, s"heartbeat -- cpu: ${cpu}, memory ${memory}, linenum ${lines.size}")
     }

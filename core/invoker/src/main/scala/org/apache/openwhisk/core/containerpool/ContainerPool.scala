@@ -119,6 +119,9 @@ class ContainerPool(childFactory: ActorRefFactory => ActorRef,
       // Check if the message is resent from the buffer. Only the first message on the buffer can be resent.
       val isResentFromBuffer = runBuffer.nonEmpty && runBuffer.dequeueOption.exists(_._1.msg == r.msg)
 
+      // hermod
+      ContainerPool.warms = ContainerPool.listWarms(freePool)
+
       // yanqi, use estimated cpu usage
       var cpuLimit = r.msg.cpuLimit
       var cpuUtil  = r.msg.cpuUtil
@@ -265,6 +268,9 @@ class ContainerPool(childFactory: ActorRefFactory => ActorRef,
         freePool = freePool - sender()
       }
 
+      // hermod
+      ContainerPool.warms = ContainerPool.listWarms(freePool)
+
     // Container is prewarmed and ready to take work
     case NeedWork(data: PreWarmedData) =>
       prewarmedPool = prewarmedPool + (sender() -> data)
@@ -285,6 +291,9 @@ class ContainerPool(childFactory: ActorRefFactory => ActorRef,
         feed ! MessageFeed.Processed
       }
 
+      // hermod
+      ContainerPool.warms = ContainerPool.listWarms(freePool)
+
     // This message is received for one of these reasons:
     // 1. Container errored while resuming a warm container, could not process the job, and sent the job back
     // 2. The container aged, is destroying itself, and was assigned a job which it had to send back
@@ -293,6 +302,9 @@ class ContainerPool(childFactory: ActorRefFactory => ActorRef,
     case RescheduleJob =>
       freePool = freePool - sender()
       busyPool = busyPool - sender()
+
+      // hermod
+      ContainerPool.warms = ContainerPool.listWarms(freePool)
   }
 
   /** Creates a new container and updates state accordingly. */
@@ -424,6 +436,8 @@ class ContainerPool(childFactory: ActorRefFactory => ActorRef,
 }
 
 object ContainerPool {
+  // hermod
+  var warms = immutable.Map.empty[String, Int]
 
   /**
    * Calculate the memory of a given pool.
@@ -487,6 +501,32 @@ object ContainerPool {
           case _                                                                                  => false
         }
       }
+  }
+
+  // [Hermod]
+  protected[containerpool] def listWarms[A](idles: Map[A, ContainerData]) = {
+    // println(s"[Hermod] idles: ${idles}")
+    var warms = immutable.Map.empty[String, Int]
+    idles
+      .foreach { pair =>
+        val name = pair._2 match {
+          case _: WarmedData =>
+            pair._2.asInstanceOf[WarmedData].action.name.toString()
+          case _: WarmingData =>
+            pair._2.asInstanceOf[WarmingData].action.name.toString()
+          case _: WarmingColdData =>
+            pair._2.asInstanceOf[WarmingColdData].action.name.toString()
+          case _ =>
+            "Unknown"
+        }
+        // println(s"[Hermod] key: ${pair._1}, value: ${pair._2}, name: ${name}")
+
+        if (!name.contains("Unknown") && !name.contains("invokerHealth")) {
+          val warmCnt = warms.getOrElse(name, 0)
+          warms = warms + (name -> (warmCnt + 1))
+        }
+      }
+    warms
   }
 
   // yanqi, add removing container wrt cpu (utilizaiton)
