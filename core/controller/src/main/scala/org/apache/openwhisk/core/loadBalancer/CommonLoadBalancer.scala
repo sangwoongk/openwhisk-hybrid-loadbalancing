@@ -35,6 +35,7 @@ import org.apache.openwhisk.core.{ConfigKeys, WhiskConfig}
 
 import scala.collection.concurrent.TrieMap
 import scala.collection.mutable.{Map=>MMap}
+import scala.collection.immutable
 import scala.concurrent.duration._
 import scala.concurrent.{ExecutionContext, Future, Promise}
 import scala.util.{Failure, Success, Random}
@@ -68,7 +69,7 @@ abstract class CommonLoadBalancer(config: WhiskConfig,
   protected val totalBlackBoxActivationMemory = new LongAdder()
   protected val totalManagedActivationMemory = new LongAdder()
 
-  /* distribution of cpu usage of functions, yanqimport scala.mathi*/
+  /* distribution of cpu usage of functions, yanqi*/
   protected[loadBalancer] val functionCpuUtil = TrieMap[FullyQualifiedEntityName, Double]()
   // distribution is only accessed in dataProcessor
   protected[loadBalancer] val functionCpuUtilDistr = MMap[FullyQualifiedEntityName, Distribution]()
@@ -85,6 +86,10 @@ abstract class CommonLoadBalancer(config: WhiskConfig,
   protected val cpuUtilWindow:Int = 50
   protected val redundantRatio: Double = 1.001
   protected val randomGen = Random
+  protected val maxCpuLimit:Double = 1.0
+  protected val minCpuLimit:Double = 1.0
+
+  protected[loadBalancer] var invokerNumFunctions = immutable.Map.empty[InvokerInstanceId, Counter]
 
   case class InvocationSample(actionId: FullyQualifiedEntityName, cpuUtil: Double, updateCpuLimit: Boolean)
   // use another process for proecssing data wrt function cpu util distribution
@@ -105,9 +110,9 @@ abstract class CommonLoadBalancer(config: WhiskConfig,
         else {
            val curr_limit = functionCpuLimit.getOrElse(sample.actionId, 0.0)
            if(curr_limit < estimated_limit)
-            functionCpuLimit.update(sample.actionId, math.min(estimated_limit, 4.0))
+            functionCpuLimit.update(sample.actionId, math.min(estimated_limit, maxCpuLimit))
            else if(cpu_limit < math.floor(curr_limit/(redundantRatio*redundantRatio)))
-            functionCpuLimit.update(sample.actionId, math.min(math.ceil(curr_limit/redundantRatio), 4.0) )
+            functionCpuLimit.update(sample.actionId, math.min(math.ceil(curr_limit/redundantRatio), maxCpuLimit))
         }
         logging.info(this, s"function ${sample.actionId.asString} raw_cpu_limit = ${cpu_limit} cpu_limit = ${functionCpuLimit.get(sample.actionId)}, cpu_usage = ${estimated_cpu}") 
     }
@@ -341,8 +346,17 @@ abstract class CommonLoadBalancer(config: WhiskConfig,
         releaseInvoker(invoker, entry)
 
         // yanqi, update cpu usage
-        if(cpuUtil > 0 && randomGen.nextDouble <= functionSampleRate)
+        if(cpuUtil > 0 && randomGen.nextDouble <= functionSampleRate) {
           dataProcessor ! InvocationSample(entry.fullyQualifiedEntityName, cpuUtil, entry.updateCpuLimit)
+
+          // hermod, decrease the number of running functions in certain invoker
+          val numFunctions = invokerNumFunctions.get(invoker)
+          if (numFunctions.isDefined) {
+            val decCnt = numFunctions.get
+            decCnt.prev()
+            invokerNumFunctions = invokerNumFunctions + (invoker -> decCnt)
+          }
+        }
         logging.info(this, s"function ${entry.fullyQualifiedEntityName.asString}, activation id ${aid}, cpu usage = ${cpuUtil}")(tid)
 
         if (!forced) {

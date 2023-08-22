@@ -1,3 +1,3 @@
 #!/bin/bash
-
-wsk -i action invoke linp-00
+num=`printf "%.2d" $1`
+wsk -i action invoke linp-$num

@@ -138,7 +138,14 @@ class InvokerPool(childFactory: (ActorRefFactory, InvokerInstanceId) => ActorRef
       }
 
       // hermod. Maintain Map of warm containers for each invoker
-      InvokerPool.warms = InvokerPool.warms + (p.instance.toInt -> p.warms)
+      // InvokerPool.warms = InvokerPool.warms + (p.instance.toInt -> p.warms)
+      p.warms.foreach { elem => 
+        val funcName = elem._1
+        val cnt = elem._2
+        var prevElem = InvokerPool.warms.getOrElse(funcName, immutable.Map.empty[Int, Int])
+        prevElem = prevElem + (p.instance.toInt -> cnt)
+        InvokerPool.warms = InvokerPool.warms + (funcName -> prevElem)
+      }
 
       invoker.forward(p)
 
@@ -226,8 +233,9 @@ class InvokerPool(childFactory: (ActorRefFactory, InvokerInstanceId) => ActorRef
 }
 
 object InvokerPool {
-  // hermod
-  var warms = immutable.Map.empty[Int, Map[String, Int]]
+  // var warms = immutable.Map.empty[Int, Map[String, Int]]
+  // hermod, first key: function name, second key: invoker id, value: warm container count
+  var warms = immutable.Map.empty[String, Map[Int, Int]]
 
   private def createTestActionForInvokerHealth(db: EntityStore, action: WhiskAction): Future[Unit] = {
     implicit val tid: TransactionId = TransactionId.loadbalancer

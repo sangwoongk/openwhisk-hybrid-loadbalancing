@@ -45,6 +45,8 @@ import scala.concurrent.duration.FiniteDuration
 import scala.math.max
 // yanqi, needs to be renamed, otherwise conflit with immutable collection
 import scala.collection.mutable.{Map=>MMap}
+import scala.collection.immutable
+import scala.util.Random
 // import util.control.Breaks._
 
 /**
@@ -257,6 +259,9 @@ class HarvestVMContainerPoolBalancer(
   override def invokerHealth(): Future[IndexedSeq[InvokerHealth]] = Future.successful(schedulingState.invokers)
   override def clusterSize: Int = schedulingState.clusterSize
 
+  // hermod
+  private val homeInvoker = 0
+
   /** 1. Publish a message to the loadbalancer */
   override def publish(action: ExecutableWhiskActionMetaData, msg: ActivationMessage)(
     implicit transid: TransactionId): Future[Future[Either[ActivationId, WhiskActivation]]] = {
@@ -270,23 +275,25 @@ class HarvestVMContainerPoolBalancer(
     var cpuUtil = functionCpuUtil.getOrElse(action.fullyQualifiedName(true), 0.0)
     val chosen = if (invokersToUse.nonEmpty) {
       val hash = HarvestVMContainerPoolBalancer.generateHash(msg.user.namespace.name, action.fullyQualifiedName(false))
-      val homeInvoker = hash % invokersToUse.size
+      // val homeInvoker = hash % invokersToUse.size
       // val stepSize = stepSizes(hash % stepSizes.size)
       val stepSize: Int = 1 // [pickme]
 
       // yanqi, check if we can use the distribution
-      var cpuLimit: Double = functionCpuLimit.getOrElse(action.fullyQualifiedName(true), 0.0)
-      // if(functionCpuUtil.contains(action.fullyQualifiedName(true)))
-      //   cpuLimit = functionCpuUtil(action.fullyQualifiedName(true)).query()
-      if(cpuLimit <= 0.0) {
-        cpuLimit = action.limits.cpu.cores
-        updateCpuLimit = true
-      }
+      // var cpuLimit: Double = functionCpuLimit.getOrElse(action.fullyQualifiedName(true), 0.0)
+      // if(cpuLimit <= 0.0) {
+      //   cpuLimit = action.limits.cpu.cores
+      //   updateCpuLimit = true
+      // }
+
+      // hermod. Fix cpu limit to 1.0
+      val cpuLimit = 1.0
       msg.cpuLimit = cpuLimit
 
       if(cpuUtil <= 0.0)
         cpuUtil = cpuLimit
 
+      logging.debug(this, s"[Hermod] schedulingState.invokers: ${schedulingState.invokers}, homeInvoker: ${homeInvoker}")
       // val invoker: Option[(InvokerInstanceId, Boolean)] = HarvestVMContainerPoolBalancer.schedule(
       //   action.limits.concurrency.maxConcurrent,
       //   action.fullyQualifiedName(true),
@@ -299,7 +306,7 @@ class HarvestVMContainerPoolBalancer(
       //   stepSize,
       //   schedulingState.clusterSize)
 
-      val invoker: Option[(InvokerInstanceId, Boolean)] = HarvestVMContainerPoolBalancer.schedule(
+      val invoker: Option[(InvokerInstanceId, Boolean)] = HarvestVMContainerPoolBalancer.hermodSchedule(
         action.limits.concurrency.maxConcurrent,
         action.fullyQualifiedName(true),
         invokersToUse,
@@ -308,7 +315,11 @@ class HarvestVMContainerPoolBalancer(
         cpuUtil, // replace with estimation
         cpuLimit, // used to check if an invoker can hold the container of the function
         action.limits.memory.megabytes,
-        schedulingState.clusterSize)
+        schedulingState.clusterSize,
+        invokerNumFunctions,
+        homeInvoker)
+
+      logging.debug(this, s"[Hermod] scheduling result: ${invoker}")
 
       invoker.foreach {
         case (_, true) =>
@@ -327,6 +338,11 @@ class HarvestVMContainerPoolBalancer(
 
     chosen
       .map { invoker =>
+        // hermod, increase the number of running functions in certain invoker
+        val numFunctions = invokerNumFunctions.getOrElse(invoker, new Counter)
+        numFunctions.next()
+        invokerNumFunctions = invokerNumFunctions + (invoker -> numFunctions)
+
         // MemoryLimit() and TimeLimit() return singletons - they should be fast enough to be used here
         // val cpuLimit = action.limits.cpu
         val memoryLimit = action.limits.memory
@@ -445,6 +461,102 @@ object HarvestVMContainerPoolBalancer extends LoadBalancerProvider {
    * @param clusterSize number of controllers in the system
    * @return an invoker to schedule to or None of no invoker is available
    */
+ def hermodSchedule(
+    maxConcurrent: Int,
+    fqn: FullyQualifiedEntityName,
+    invokers: IndexedSeq[InvokerHealth],
+    usedResources: Map[Int, InvokerResourceUsage],
+    reqCpu: Double,
+    cpuLimit: Double,
+    reqMemory: Long,
+    clusterSize: Int,
+    invokerNumFunctions: Map[InvokerInstanceId, Counter],
+    homeInvoker: Int)(implicit logging: Logging, transId: TransactionId): Option[(InvokerInstanceId, Boolean)] = {
+    val numInvokers = invokers.size
+    val actionName = fqn.name.name
+    val corePerInvoker = 2
+
+    var lowSched = -1
+    var highSched = -1
+    logging.debug(this, s"[Hermod] warms: ${InvokerPool.warms}, invokerNumFunctions: ${invokerNumFunctions}")
+    // TODO: check overload status, warm container, number of instances per invoker
+    if (numInvokers > 0) {
+      // check hermod mode
+      val isHighLoad = if (invokerNumFunctions.size == numInvokers) invokerNumFunctions.forall(_._2.cur > corePerInvoker) else false
+      logging.debug(this, s"[Hermod] isHighLoad: ${isHighLoad}")
+
+      if (isHighLoad) {
+        val firstVal = invokerNumFunctions.head._2.cur
+        val isAllSame = invokerNumFunctions.forall{ case (_, v) => v.cur == firstVal }
+
+        if (isAllSame) {
+          // sched to invoker with warm container
+          val warmInvokers = InvokerPool.warms.getOrElse(actionName, immutable.Map.empty[Int, Int])
+          if (warmInvokers.size == 0) {
+            // no warm container -> select randomly among all invokers
+            highSched = Random.nextInt(numInvokers)
+          } else {
+            // warm container exists -> select randomly among warm invokers
+            highSched = warmInvokers.toSeq(Random.nextInt(warmInvokers.size))._1
+          }
+        } else {
+          // sched to invoker with smallest functions
+          highSched = invokerNumFunctions.minBy(_._2.cur)._1.toInt
+        }
+      } else {
+        // low load
+        // val warmInvokers = InvokerPool.warms.getOrElse(actionName.name, immutable.Map.empty[Int, Int])
+        lowSched = InvokerPool.warms.get(actionName) match {
+          case Some(m) =>
+            // warm container exists
+            // val filledWarms = m.filter(p => invokerNumFunctions.getOrElse(invokers(p._1).id, new Counter).cur > 0 && 
+            //   invokerNumFunctions.getOrElse(invokers(p._1).id, new Counter).cur <= corePerInvoker)
+            val filledWarms = invokerNumFunctions.filter(p => p._2.cur > 0 && p._2.cur <= corePerInvoker && m.contains(p._1.toInt))
+            val filledColds = invokerNumFunctions.filter(p => p._2.cur > 0 && p._2.cur <= corePerInvoker && !m.contains(p._1.toInt))
+            val emptyWarms = invokerNumFunctions.filter(p => p._2.cur == 0 && m.contains(p._1.toInt))
+            val emptyColds = invokerNumFunctions.filter(p => p._2.cur == 0 && !m.contains(p._1.toInt))
+            logging.debug(this, s"[Hermod] filledWarms: ${filledWarms}, filledColds: ${filledColds}, emptyWarms: ${emptyWarms}, emptyColds: ${emptyColds}")
+            if (filledWarms.size > 0) {
+              filledWarms.toSeq(Random.nextInt(filledWarms.size))._1.toInt
+            } else if (filledColds.size > 0) {
+              filledColds.toSeq(Random.nextInt(filledColds.size))._1.toInt
+            } else if (emptyWarms.size > 0) {
+              emptyWarms.toSeq(Random.nextInt(emptyWarms.size))._1.toInt
+            } else {
+              emptyColds.toSeq(Random.nextInt(emptyColds.size))._1.toInt
+            }
+          case None =>
+            // warm container not exists
+            val availables = invokerNumFunctions.filter(p => p._2.cur <= corePerInvoker)
+            logging.debug(this, s"[Hermod] availables: ${availables}")
+            invokers.zipWithIndex.drop(homeInvoker).find { case (elem, _) =>
+              availables.contains(elem.id)
+            }.map(_._2).getOrElse(-1)
+        }
+      }
+
+      if (isHighLoad) {
+        val invoker = invokers(highSched).id
+        Some(invoker, true)
+      } else if (lowSched != -1) {
+        val invoker = invokers(lowSched).id
+        Some(invoker, false)
+      } else {
+        val healthyInvokers = invokers.filter(_.status.isUsable)
+        if (healthyInvokers.nonEmpty) {
+          val random = healthyInvokers(Random.nextInt(healthyInvokers.size)).id
+          logging.debug(this, s"[Hermod] randomly pick: ${random}")
+          Some(random, false)
+        } else {
+          None
+        }
+      }
+    } else {
+      None
+    }
+
+    }
+  /*
   def schedule(
     maxConcurrent: Int,
     fqn: FullyQualifiedEntityName,
@@ -531,6 +643,7 @@ object HarvestVMContainerPoolBalancer extends LoadBalancerProvider {
       None
     }
   }
+  */
 
 }
 
