@@ -287,7 +287,6 @@ class ContainerProxy(
       activeCount += 1
       // pickme
       val createStart = Instant.now
-      logging.info(this ,s"[pickme] creating: ${ContainerProxy.creating.next()}")
 
       // create a new container
       // yanqi, add cpus constraint on docker
@@ -344,7 +343,6 @@ class ContainerProxy(
         }
         .flatMap { container =>
           val createEnd = Instant.now
-          ContainerProxy.creating.prev()
           // now attempt to inject the user code and run the action
           initializeAndRun(container, job, Option(Interval(createStart, createEnd)))  // [pickme] add interval
             .map(_ => RunCompleted)
@@ -596,13 +594,8 @@ class ContainerProxy(
    *         added to the WhiskActivation
    */
   def initializeAndRun(container: Container, job: Run, coldStartTime: Option[Interval] = None)(implicit tid: TransactionId): Future[WhiskActivation] = {
-    // [pickme]
-    logging.info(this, s"[pickme] initializing: ${ContainerProxy.initializing.next()}")
-
     val actionTimeout = job.action.limits.timeout.duration
     val (env, parameters) = ContainerProxy.partitionArguments(job.msg.content, job.msg.initArgs)
-
-    // val start_ns = System.nanoTime
 
     // Only initialize iff we haven't yet warmed the container
     val initialize = stateData match {
@@ -614,21 +607,9 @@ class ContainerProxy(
           .map(Some(_))
     }
 
-    // val end_ns = System.nanoTime
-    // logging.info(this, s"container initialization time = ${(end_ns - start_ns)/1000000.0} ms")
-
     // yanqi, assign cpu limit according to controller's msg
-    var updateDocker = false
     var cpuLimit = job.msg.cpuLimit
-    if(cpuLimit <= 0)
-      cpuLimit = job.action.limits.cpu.cores
-    // logging.error(this, s"container received cpu limit = ${cpuLimit}, current cpu limit = ${currentCpuLimit}")
-    if(cpuLimit != currentCpuLimit) {
-      updateDocker = true
-      currentCpuLimit = cpuLimit
-    }
-    // logging.error(this, s"container updateDocker = ${updateDocker}")
-    
+    logging.debug(this, s"[Hermod] cpuLimit: ${cpuLimit}")
 
     var cpuUtil: Double = 0.0
     val activation: Future[WhiskActivation] = initialize
@@ -655,17 +636,13 @@ class ContainerProxy(
           // but potentially under-estimates actual deadline
           "deadline" -> (Instant.now.toEpochMilli + actionTimeout.toMillis).toString.toJson)
 
-        // [pickme]
-        ContainerProxy.initializing.prev()
-
         container
           .run(
             parameters,
             JsObject(authEnvironment.fields ++ environment.fields),
             actionTimeout,
             job.action.limits.concurrency.maxConcurrent, 
-            cpuLimit,
-            updateDocker)(job.msg.transid)  // yanqi, add cpuLimit & updateDocker
+            cpuLimit)(job.msg.transid)  // yanqi, add cpuLimit & updateDocker
           .map {
             // yanqi, add cpu_util in returned tuple of Container::run 
             case (runInterval, response, cpu_util) =>
@@ -794,9 +771,6 @@ object ContainerProxy {
 
   // Needs to be thread-safe as it's used by multiple proxies concurrently.
   private val containerCount = new Counter
-  // [pickme debug]
-  private val initializing = new Counter
-  private val creating = new Counter
 
   val timeouts = loadConfigOrThrow[ContainerProxyTimeoutConfig](ConfigKeys.containerProxyTimeouts)
 

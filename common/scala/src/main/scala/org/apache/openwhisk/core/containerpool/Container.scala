@@ -155,20 +155,8 @@ trait Container {
   // yanqi, add cpu limit to tune container resource at run time
   // Attention: cpu limit is the given budget for the activation, cpu usage/util is the actual measured cpu utilization 
   /** Runs code in the container. Thread-safe - caller may invoke concurrently for concurrent activation processing. */
-  def run(parameters: JsObject, environment: JsObject, timeout: FiniteDuration, maxConcurrent: Int, cpuLimit: Double, updateDocker: Boolean)(
+  def run(parameters: JsObject, environment: JsObject, timeout: FiniteDuration, maxConcurrent: Int, cpuLimit: Double)(
     implicit transid: TransactionId): Future[(Interval, ActivationResponse, Double)] = {  // yanqi, add Double for cpu util
-    /* Update docker before running the request*/
-    // check if this is the overhead
-    // yanqi, first update cpu limit
-    if(updateDocker) {
-      var start_ns = System.nanoTime
-      val cpuUpdateArgs: Seq[String] = Seq(
-        "--cpus",
-        cpuLimit.toString)
-      update(cpuUpdateArgs)
-      logging.warn(this, s"docker update ${cpuUpdateArgs} time = ${(System.nanoTime - start_ns)/1000000.0}ms")
-    }
-
     val actionName = environment.fields.get("action_name").map(_.convertTo[String]).getOrElse("")
     val start =
       transid.started(

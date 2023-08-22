@@ -106,6 +106,11 @@ object DockerContainer {
       case (key, valueList) => valueList.toList.flatMap(Seq(key, _))
     }
 
+    // hermod. fix function's cpu limit to 1.0
+    val hermod_cpus = 1.0
+    val cpu_period: Long = 10000
+    val cpu_quota: Long = (hermod_cpus * cpu_period).toLong
+
     // change cpu to cpu groups
     // NOTE: --dns-option on modern versions of docker, but is --dns-opt on docker 1.12
     val dnsOptString = if (docker.clientVersion.startsWith("1.12")) { "--dns-opt" } else { "--dns-option" }
@@ -116,6 +121,10 @@ object DockerContainer {
       // cpus.toString,
       // "--cgroup-parent",
       // "/cgroup_harvest_vm/",
+      "--cpu-period",
+      cpu_period.toString,
+      "--cpu-quota",
+      cpu_quota.toString,
       "--memory",
       s"${memory.toMB}m",
       "--memory-swap",
