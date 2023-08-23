@@ -293,7 +293,6 @@ class HarvestVMContainerPoolBalancer(
       if(cpuUtil <= 0.0)
         cpuUtil = cpuLimit
 
-      logging.debug(this, s"[Hermod] schedulingState.invokers: ${schedulingState.invokers}, homeInvoker: ${homeInvoker}")
       // val invoker: Option[(InvokerInstanceId, Boolean)] = HarvestVMContainerPoolBalancer.schedule(
       //   action.limits.concurrency.maxConcurrent,
       //   action.fullyQualifiedName(true),
@@ -305,6 +304,14 @@ class HarvestVMContainerPoolBalancer(
       //   homeInvoker,
       //   stepSize,
       //   schedulingState.clusterSize)
+
+      if (invokerNumFunctions.size < invokersToUse.size) {
+        invokersToUse.foreach { invoker =>
+          if (!invokerNumFunctions.contains(invoker.id)) {
+            invokerNumFunctions = invokerNumFunctions + (invoker.id -> new Counter)
+          }
+        }
+      }
 
       val invoker: Option[(InvokerInstanceId, Boolean)] = HarvestVMContainerPoolBalancer.hermodSchedule(
         action.limits.concurrency.maxConcurrent,
@@ -478,12 +485,11 @@ object HarvestVMContainerPoolBalancer extends LoadBalancerProvider {
 
     var lowSched = -1
     var highSched = -1
-    logging.debug(this, s"[Hermod] warms: ${InvokerPool.warms}, invokerNumFunctions: ${invokerNumFunctions}")
-    // TODO: check overload status, warm container, number of instances per invoker
     if (numInvokers > 0) {
       // check hermod mode
-      val isHighLoad = if (invokerNumFunctions.size == numInvokers) invokerNumFunctions.forall(_._2.cur > corePerInvoker) else false
-      logging.debug(this, s"[Hermod] isHighLoad: ${isHighLoad}")
+      val isHighLoad = if (invokerNumFunctions.size == numInvokers) invokerNumFunctions.forall(_._2.cur >= corePerInvoker) else false
+      val tmpMap = invokerNumFunctions.map { case (key, counter) => s"(${key}, ${counter.cur})" }.mkString(" ")
+      logging.debug(this, s"[Hermod] name: ${actionName}, warms: ${InvokerPool.warms}, invokerNumFunctions: ${tmpMap}, isHighLoad: ${isHighLoad}")
 
       if (isHighLoad) {
         val firstVal = invokerNumFunctions.head._2.cur
@@ -492,6 +498,7 @@ object HarvestVMContainerPoolBalancer extends LoadBalancerProvider {
         if (isAllSame) {
           // sched to invoker with warm container
           val warmInvokers = InvokerPool.warms.getOrElse(actionName, immutable.Map.empty[Int, Int])
+          logging.debug(this, s"[Hermod] all loads are same! warms: ${warmInvokers}")
           if (warmInvokers.size == 0) {
             // no warm container -> select randomly among all invokers
             highSched = Random.nextInt(numInvokers)
@@ -500,8 +507,11 @@ object HarvestVMContainerPoolBalancer extends LoadBalancerProvider {
             highSched = warmInvokers.toSeq(Random.nextInt(warmInvokers.size))._1
           }
         } else {
-          // sched to invoker with smallest functions
-          highSched = invokerNumFunctions.minBy(_._2.cur)._1.toInt
+          // sched to invoker with smallest functions. If same, randomly pick one
+          val minVal = invokerNumFunctions.minBy(_._2.cur)._2.cur
+          logging.debug(this, s"[Hermod] sched to smallest load invoker. minVal: ${minVal}")
+          val candidates = invokerNumFunctions.filter(_._2.cur == minVal).toSeq
+          highSched = candidates(Random.nextInt(candidates.size))._1.toInt
         }
       } else {
         // low load
@@ -509,26 +519,38 @@ object HarvestVMContainerPoolBalancer extends LoadBalancerProvider {
         lowSched = InvokerPool.warms.get(actionName) match {
           case Some(m) =>
             // warm container exists
-            // val filledWarms = m.filter(p => invokerNumFunctions.getOrElse(invokers(p._1).id, new Counter).cur > 0 && 
-            //   invokerNumFunctions.getOrElse(invokers(p._1).id, new Counter).cur <= corePerInvoker)
-            val filledWarms = invokerNumFunctions.filter(p => p._2.cur > 0 && p._2.cur <= corePerInvoker && m.contains(p._1.toInt))
-            val filledColds = invokerNumFunctions.filter(p => p._2.cur > 0 && p._2.cur <= corePerInvoker && !m.contains(p._1.toInt))
+            val filledWarms = invokerNumFunctions.filter(p => p._2.cur > 0 && p._2.cur < corePerInvoker && m.contains(p._1.toInt))
+            val filledColds = invokerNumFunctions.filter(p => p._2.cur > 0 && p._2.cur < corePerInvoker && !m.contains(p._1.toInt))
             val emptyWarms = invokerNumFunctions.filter(p => p._2.cur == 0 && m.contains(p._1.toInt))
             val emptyColds = invokerNumFunctions.filter(p => p._2.cur == 0 && !m.contains(p._1.toInt))
-            logging.debug(this, s"[Hermod] filledWarms: ${filledWarms}, filledColds: ${filledColds}, emptyWarms: ${emptyWarms}, emptyColds: ${emptyColds}")
+            logging.debug(this, s"[Hermod] warms! filledWarms: ${filledWarms.keySet}, filledColds: ${filledColds.keySet}, emptyWarms: ${emptyWarms.keySet}, emptyColds: ${emptyColds.keySet}")
             if (filledWarms.size > 0) {
-              filledWarms.toSeq(Random.nextInt(filledWarms.size))._1.toInt
+              // filledWarms.toSeq(Random.nextInt(filledWarms.size))._1.toInt
+              invokers.zipWithIndex.drop(homeInvoker).find { case (elem, _) => 
+                filledWarms.contains(elem.id)
+              }.map(_._2).getOrElse(-1)
             } else if (filledColds.size > 0) {
-              filledColds.toSeq(Random.nextInt(filledColds.size))._1.toInt
+              // filledColds.toSeq(Random.nextInt(filledColds.size))._1.toInt
+              invokers.zipWithIndex.drop(homeInvoker).find { case (elem, _) => 
+                filledColds.contains(elem.id)
+              }.map(_._2).getOrElse(-1)
             } else if (emptyWarms.size > 0) {
-              emptyWarms.toSeq(Random.nextInt(emptyWarms.size))._1.toInt
+              // emptyWarms.toSeq(Random.nextInt(emptyWarms.size))._1.toInt
+              invokers.zipWithIndex.drop(homeInvoker).find { case (elem, _) => 
+                emptyWarms.contains(elem.id)
+              }.map(_._2).getOrElse(-1)
+            } else if (emptyColds.size > 0) {
+              // emptyColds.toSeq(Random.nextInt(emptyColds.size))._1.toInt
+              invokers.zipWithIndex.drop(homeInvoker).find { case (elem, _) => 
+                emptyColds.contains(elem.id)
+              }.map(_._2).getOrElse(-1)
             } else {
-              emptyColds.toSeq(Random.nextInt(emptyColds.size))._1.toInt
+              -1
             }
           case None =>
             // warm container not exists
-            val availables = invokerNumFunctions.filter(p => p._2.cur <= corePerInvoker)
-            logging.debug(this, s"[Hermod] availables: ${availables}")
+            val availables = invokerNumFunctions.filter(p => p._2.cur < corePerInvoker)
+            logging.debug(this, s"[Hermod] No warms! availables: ${availables}")
             invokers.zipWithIndex.drop(homeInvoker).find { case (elem, _) =>
               availables.contains(elem.id)
             }.map(_._2).getOrElse(-1)

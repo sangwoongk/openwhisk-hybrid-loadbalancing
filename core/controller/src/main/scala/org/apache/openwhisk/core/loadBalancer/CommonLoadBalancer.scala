@@ -345,18 +345,18 @@ abstract class CommonLoadBalancer(config: WhiskConfig,
 
         releaseInvoker(invoker, entry)
 
-        // yanqi, update cpu usage
-        if(cpuUtil > 0 && randomGen.nextDouble <= functionSampleRate) {
-          dataProcessor ! InvocationSample(entry.fullyQualifiedEntityName, cpuUtil, entry.updateCpuLimit)
-
-          // hermod, decrease the number of running functions in certain invoker
-          val numFunctions = invokerNumFunctions.get(invoker)
-          if (numFunctions.isDefined) {
-            val decCnt = numFunctions.get
-            decCnt.prev()
-            invokerNumFunctions = invokerNumFunctions + (invoker -> decCnt)
-          }
+        // hermod, decrease the number of running functions in certain invoker
+        val numFunctions = invokerNumFunctions.get(invoker)
+        if (numFunctions.isDefined) {
+          val decCnt = numFunctions.get
+          decCnt.prev()
+          invokerNumFunctions = invokerNumFunctions + (invoker -> decCnt)
         }
+
+        // yanqi, update cpu usage -> deactivate
+        // if(cpuUtil > 0 && randomGen.nextDouble <= functionSampleRate)
+          // dataProcessor ! InvocationSample(entry.fullyQualifiedEntityName, cpuUtil, entry.updateCpuLimit)
+
         logging.info(this, s"function ${entry.fullyQualifiedEntityName.asString}, activation id ${aid}, cpu usage = ${cpuUtil}")(tid)
 
         if (!forced) {
