@@ -108,7 +108,7 @@ object DockerContainer {
 
     // hermod. fix function's cpu limit to 1.0
     val hermod_cpus = 1.0
-    val cpu_period: Long = 10000
+    val cpu_period: Long = 100000
     val cpu_quota: Long = (hermod_cpus * cpu_period).toLong
 
     // change cpu to cpu groups
