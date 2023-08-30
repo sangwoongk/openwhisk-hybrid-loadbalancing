@@ -106,8 +106,8 @@ object DockerContainer {
       case (key, valueList) => valueList.toList.flatMap(Seq(key, _))
     }
 
-    // hermod. fix function's cpu limit to 1.0
-    val hermod_cpus = 1.0
+    // hermod. fix function's cpu limit to 2.0
+    val hermod_cpus = 2.0
     val cpu_period: Long = 100000
     val cpu_quota: Long = (hermod_cpus * cpu_period).toLong
 
