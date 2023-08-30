@@ -104,7 +104,7 @@ controller:
     spi: "{{ controller_loadbalancer_spi | default('') }}"
   authentication:
     spi: "{{ controller_authentication_spi | default('') }}"
-  loglevel: "{{ controller_loglevel | default(whisk_loglevel) | default('DEBUG') }}"
+  loglevel: "{{ controller_loglevel | default(whisk_loglevel) | default('INFO') }}"
   entitlement:
     spi: "{{ controller_entitlement_spi | default('') }}"
   protocol: "{{ controller_protocol | default('https') }}"
@@ -199,7 +199,7 @@ invoker:
   docker:
     become: "{{ invoker_docker_become | default(false) }}"
     runcdir: "{{ invoker_runcdir | default('/run/docker/runtime-runc/moby') }}"
-  loglevel: "{{ invoker_loglevel | default(whisk_loglevel) | default('DEBUG') }}"
+  loglevel: "{{ invoker_loglevel | default(whisk_loglevel) | default('INFO') }}"
   jmxremote:
     jvmArgs: "{% if inventory_hostname in groups['invokers'] %}
     {{ jmx.jvmCommonArgs }} -Djava.rmi.server.hostname={{ invokerHostname }} -Dcom.sun.management.jmxremote.rmi.port={{ jmx.rmiBasePortInvoker + groups['invokers'].index(inventory_hostname) }} -Dcom.sun.management.jmxremote.port={{ jmx.basePortInvoker + groups['invokers'].index(inventory_hostname) }}
