@@ -103,3 +103,4 @@ core/routemgmt/getApi/utils.js
 wsk
 command_to_vm.sh
 command_to_host.sh
+debug_logs/

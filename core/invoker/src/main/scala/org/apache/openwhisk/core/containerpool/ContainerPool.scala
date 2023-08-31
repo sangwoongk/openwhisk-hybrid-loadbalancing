@@ -173,6 +173,7 @@ class ContainerPool(childFactory: ActorRefFactory => ActorRef,
       val isResentFromBuffer = runBuffer.nonEmpty && runBuffer.dequeueOption.exists(_._1.msg == r.msg)
 
       // hermod
+      r.msg.transid.meta.queueLen = Option(runBuffer.length)
       ContainerPool.warms = ContainerPool.listWarms(freePool)
 
       // yanqi, use estimated cpu usage
