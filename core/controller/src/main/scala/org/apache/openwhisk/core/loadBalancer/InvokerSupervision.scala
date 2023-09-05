@@ -138,7 +138,9 @@ class InvokerPool(childFactory: (ActorRefFactory, InvokerInstanceId) => ActorRef
       }
 
       // hermod. Maintain Map of warm containers for each invoker
-      // InvokerPool.warms = InvokerPool.warms + (p.instance.toInt -> p.warms)
+      val instanceId = p.instance.toInt
+      // logging.info(this, s"[Hermod] invoker${instanceId} warms: ${p.warms}, saved warms: ${InvokerPool.warms}")
+
       p.warms.foreach { elem => 
         val funcName = elem._1
         val cnt = elem._2
@@ -146,6 +148,26 @@ class InvokerPool(childFactory: (ActorRefFactory, InvokerInstanceId) => ActorRef
         prevElem = prevElem + (p.instance.toInt -> cnt)
         InvokerPool.warms = InvokerPool.warms + (funcName -> prevElem)
       }
+      // logging.info(this, s"[Hermod] invoker${instanceId} mid warms: ${InvokerPool.warms}")
+
+      InvokerPool.warms.foreach { elem =>
+        val funcName = elem._1
+        var prevElem = elem._2
+        val cnt = p.warms.getOrElse(funcName, -1)
+        if (!p.warms.contains(funcName) && prevElem.contains(instanceId)) {
+          // invoker not contains function
+          prevElem = prevElem - instanceId
+          // logging.info(this, s"[Hermod] invoker${instanceId} delete funcName: ${funcName}")
+        }
+
+        if (prevElem.isEmpty) {
+          InvokerPool.warms = InvokerPool.warms - funcName
+        } else {
+          InvokerPool.warms = InvokerPool.warms + (funcName -> prevElem)
+        }
+      }
+      // logging.info(this, s"[Hermod] invoker${instanceId} final warms: ${InvokerPool.warms}")
+
 
       invoker.forward(p)
 
